@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shopping Cart - MM TYRES</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+
+<body>
+  <!-- HEADER -->
+  <header>
+    <div class="container">
+      <div class="header-content">
+        <div>
+          <h1>MM TYRES</h1>
+          <p>CEAT Tyres - Pudukkottai</p>
+        </div>
+        <nav>
+          <a href="index.html">Home</a>
+          <a href="booking.html">Book Alignment</a>
+          <a href="orders.html">My Orders</a>
+          <a href="cart.html" class="active">Cart (<span id="cartCount">0</span>)</a>
+          <div id="authButtons"></div>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main class="container">
+    <h2>Shopping Cart</h2>
+
+    <div class="cart-container">
+      <!-- Cart Items -->
+      <div class="cart-items" id="cartItemsList"></div>
+
+      <!-- Checkout Section -->
+      <div class="checkout-section">
+        <div class="order-summary">
+          <h3>Order Summary</h3>
+          <div id="orderSummary"></div>
+        </div>
+
+        <div class="checkout-form">
+          <h3>Customer Details</h3>
+          <form id="checkoutForm" onsubmit="placeOrder(event)">
+            <input type="text" id="customerName" placeholder="Full Name" required />
+            <input type="tel" id="customerPhone" placeholder="Phone Number" required pattern="[0-9]{10}" />
+            <textarea id="deliveryAddress" placeholder="Delivery Address" rows="3" required></textarea>
+
+            <h4>Payment Method</h4>
+            <select id="paymentMethod" required>
+              <option value="cod">Cash on Delivery</option>
+              <option value="online">Online Payment (Razorpay)</option>
+            </select>
+
+            <button type="submit" class="btn-primary" id="placeOrderBtn">Place Order</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="container">
+      <p>&copy; 2024 MM TYRES - CEAT Tyres Dealer, Pudukkottai</p>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/main.js"></script>
+
+  <script>
+    const RAZORPAY_KEY_ID = "rzp_test_RZLMN2nVaJjvP3";
+
+    (async () => {
+      await initAuth();
+      loadCart();
+      await prefillUserData();
+    })();
+
+    // Load cart items
+    function loadCart() {
+      const cartItemsList = document.getElementById("cartItemsList");
+      const orderSummary = document.getElementById("orderSummary");
+
+      if (cart.length === 0) {
+        cartItemsList.innerHTML = `<p>Your cart is empty. <a href="index.html">Shop now</a></p>`;
+        orderSummary.innerHTML = `<p>Total: ₹0</p>`;
+        document.getElementById("placeOrderBtn").disabled = true;
+        return;
+      }
+
+      cartItemsList.innerHTML = cart
+        .map(
+          (item) => `
+        <div class="cart-item">
+          <img src="${item.image_url || 'assets/images/default-tyre.jpg'}" alt="${item.name}">
+          <div class="item-details">
+            <h4>${item.name}</h4>
+            <p>${item.category} | ${item.size}</p>
+            <p class="price">₹${item.price}</p>
+          </div>
+          <div class="item-quantity">
+            <input type="number" value="${item.quantity}" min="1"
+              onchange="updateCartQuantity('${item.id}', this.value); loadCart();">
+          </div>
+          <div class="item-total">
+            <p>₹${item.price * item.quantity}</p>
+            <button onclick="removeFromCart('${item.id}'); loadCart();" class="btn-remove">Remove</button>
+          </div>
+        </div>`
+        )
+        .join("");
+
+      const total = getCartTotal();
+      orderSummary.innerHTML = `
+        <p>Items: ${cart.length}</p>
+        <p>Subtotal: ₹${total}</p>
+        <p>Delivery: Free</p>
+        <h3>Total: ₹${total}</h3>
+      `;
+
+      updateCartCount();
+      document.getElementById("placeOrderBtn").disabled = false;
+    }
+
+    // Prefill user data
+    async function prefillUserData() {
+      const user = await getCurrentUser();
+      if (user) {
+        document.getElementById("customerName").value =
+          user.user_metadata?.full_name || "";
+        document.getElementById("customerPhone").value =
+          user.user_metadata?.phone || "";
+      }
+    }
+
+    // Place order
+    async function placeOrder(e) {
+      e.preventDefault();
+
+      if (cart.length === 0) return alert("Cart is empty!");
+
+      const user = await getCurrentUser();
+      if (!user) {
+        alert("Please login to place order");
+        window.location.href = "auth.html";
+        return;
+      }
+
+      const customerName = document.getElementById("customerName").value.trim();
+      const customerPhone = document.getElementById("customerPhone").value.trim();
+      const deliveryAddress = document.getElementById("deliveryAddress").value.trim();
+      const paymentMethod = document.getElementById("paymentMethod").value;
+      const total = getCartTotal();
+
+      document.getElementById("placeOrderBtn").disabled = true;
+      document.getElementById("placeOrderBtn").textContent = "Processing...";
+
+      if (paymentMethod === "online") {
+        // Razorpay checkout
+        const options = {
+          key: RAZORPAY_KEY_ID,
+          amount: total * 100,
+          currency: "INR",
+          name: "MM TYRES",
+          description: "Tyre Purchase Payment",
+          handler: async function (response) {
+            await saveOrder(user, customerName, customerPhone, deliveryAddress, paymentMethod, response.razorpay_payment_id);
+          },
+          prefill: {
+            name: customerName,
+            contact: customerPhone,
+          },
+          theme: { color: "#007bff" },
+        };
+        const rzp = new Razorpay(options);
+        rzp.open();
+      } else {
+        await saveOrder(user, customerName, customerPhone, deliveryAddress, paymentMethod, "COD");
+      }
+    }
+
+    async function saveOrder(user, name, phone, address, paymentMethod, paymentId) {
+      try {
+        const orderData = {
+          user_id: user.id,
+          customer_name: name,
+          customer_phone: phone,
+          delivery_address: address,
+          payment_method: paymentMethod,
+          payment_id: paymentId,
+          items: cart,
+          total: getCartTotal(),
+          status: "pending",
+          created_at: new Date().toISOString(),
+        };
+
+        const { data, error } = await supabase.from("orders").insert([orderData]).select();
+        if (error) throw error;
+
+        alert("✅ Order placed successfully! Order ID: " + data[0].id);
+        clearCart();
+        window.location.href = "orders.html";
+      } catch (err) {
+        console.error(err);
+        alert("Error placing order: " + err.message);
+        document.getElementById("placeOrderBtn").disabled = false;
+        document.getElementById("placeOrderBtn").textContent = "Place Order";
+      }
+    }
+  </script>
+</body>
+</html>
